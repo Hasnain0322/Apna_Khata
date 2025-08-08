@@ -3,13 +3,18 @@ import re
 import joblib
 from flask import Flask, request, jsonify
 from google.cloud import vision
+from sklearn.exceptions import InconsistentVersionWarning
+import warnings
+
+# --- 0. PRE-CONFIGURATION ---
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+
 
 # --- 1. INITIAL SETUP ---
 app = Flask(__name__)
 
 # --- 2. LOAD MODELS & CLIENTS ON STARTUP ---
 
-# Load your custom category classification model
 try:
     category_classifier = joblib.load('category_classifier.pkl')
     print("✅ Category classification model loaded successfully .!")
@@ -17,8 +22,6 @@ except FileNotFoundError:
     print("❌ ERROR: 'category_classifier.pkl' not found. Please run train_model.py first.")
     exit()
 
-# Set up Google Cloud Vision client
-# This requires the 'gcp-vision-credentials.json' file in the same directory.
 try:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp-vision-credentials.json"
     vision_client = vision.ImageAnnotatorClient()
@@ -29,84 +32,104 @@ except Exception as e:
     exit()
 
 
-# --- 3. HELPER FUNCTIONS ---
+# --- 3. KEYWORD DICTIONARY & HELPER FUNCTIONS ---
 
-def extract_amount(text):
-    """Uses regex to find the first number (integer or float) in a given text string."""
-    # This regex looks for digits, optionally followed by a dot and more digits.
-    numbers = re.findall(r'\d+\.?\d*', text)
-    if numbers:
-        return float(numbers[0])
+CATEGORY_KEYWORDS = {
+    'Food & Dining': ['biryani', 'pizza', 'burger', 'sandwich', 'pasta', 'noodles', 'momo', 'thali', 'biriyani', 'dosa', 'idli', 'pav bhaji', 'maggi', 'roll', 'shawarma', 'wrap', 'ice cream', 'cake', 'pastry', 'dessert', 'coffee', 'tea', 'juice', 'smoothie', 'milkshake', 'biryani house', 'barbecue', 'kebab', 'tikka', 'restaurant', 'cafe', 'canteen', 'dining', 'buffet', 'meal', 'zomato', 'swiggy', 'dominos', 'pizza hut', "domino's", "mcdonald's", 'mcdonald', 'kfc', 'subway', 'burger king', 'starbucks', 'barista', '99 pancakes', 'hocco', 'bikanervala', 'haldiram', 'cafe coffee day', 'baskin robbins'],
+    'Grocery': ['rice', 'wheat', 'dal', 'pulses', 'sugar', 'salt', 'milk', 'bread', 'butter', 'oil', 'tea powder', 'coffee powder', 'vegetables', 'fruits', 'tomato', 'potato', 'onion', 'cabbage', 'spinach', 'coriander', 'lemon', 'masala', 'atta', 'besan', 'poha', 'suji', 'jaggery', 'eggs', 'meat', 'fish', 'chicken', 'mutton', 'prawns', 'spices', 'detergent', 'soap', 'toothpaste', 'grocery', 'bigbasket', 'dmart', 'reliance fresh', 'more supermarket', "nature's basket", 'spencer’s', 'jiomart'],
+    'Transport': ['taxi', 'cab', 'auto', 'bus', 'train', 'flight', 'airline', 'airfare', 'metro', 'tram', 'ferry', 'fuel', 'petrol', 'diesel', 'cng', 'parking', 'toll', 'ticket', 'pass', 'travel card', 'ola', 'uber', 'rapido', 'blablacar', 'redbus', 'irctc'],
+    'Shopping & Lifestyle': ['shirt', 'jeans', 't-shirt', 'tshirt', 'trousers', 'kurta', 'saree', 'dress', 'shoes', 'sandals', 'chappal', 'watch', 'wallet', 'handbag', 'purse', 'belt', 'accessories', 'jacket', 'coat', 'sweater', 'hoodie', 'spectacles', 'sunglasses', 'electronics', 'phone', 'laptop', 'charger', 'earphones', 'headphones', 'camera', 'mall', 'boutique', 'apparel', 'amazon', 'flipkart', 'myntra', 'ajio', 'meesho', 'snapdeal', 'shopclues', 'tatacliq', 'h&m', 'zara', 'nike', 'adidas', 'puma', 'reebok', 'lifestyle'],
+    'Healthcare & Medicine': ['doctor', 'hospital', 'clinic', 'pharmacy', 'chemist', 'medicine', 'injection', 'vaccine', 'blood test', 'sugar test', 'x-ray', 'scan', 'ct scan', 'mri', 'consultation', 'surgery', 'therapy', 'physiotherapy', 'dentist', 'dental', 'ayurvedic', 'homeopathy', 'optician', 'spectacles', 'hearing aid', 'apollo pharmacy', 'medplus', 'pharmeasy', '1mg', 'netmeds', 'practo'],
+    'Personal Care & Grooming': ['salon', 'spa', 'haircut', 'hair wash', 'shaving', 'trimming', 'beard', 'hair color', 'facial', 'manicure', 'pedicure', 'beauty', 'makeup', 'wax', 'threading', 'perfume', 'deodorant', 'lotion', 'shampoo', 'conditioner', 'body wash', 'soap', 'comb', 'mirror', 'towel', 'grooming kit', 'nykaa', 'purplle', 'wow skin', 'beardo', 'mcaffeine', 'urban company'],
+    'Utilities & Bills': ['electricity bill', 'water bill', 'gas bill', 'broadband', 'wifi', 'internet', 'cable', 'dth', 'recharge', 'mobile bill', 'postpaid', 'prepaid', 'landline', 'rent', 'emi', 'loan', 'insurance', 'subscription', 'netflix', 'prime', 'hotstar', 'spotify', 'zee5', 'sony liv', 'voot', 'youtube premium'],
+    'Others': ['charity', 'donation', 'gift', 'stationery', 'pen', 'pencil', 'notebook', 'printing', 'photocopy', 'laundry', 'tailoring', 'repair', 'maintenance', 'pet food', 'toy', 'game', 'miscellaneous']
+}
+
+def get_category_from_keywords(text):
+    """Searches for keywords in the text to determine a category."""
+    text_lower = text.lower()
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in text_lower:
+                return category
     return None
 
-def extract_item(text, amount):
-    """A simple heuristic to guess the item name by cleaning up the input text."""
-    # Convert amount to string to remove it from the text
-    if amount:
-        amount_str = str(int(amount) if amount.is_integer() else amount)
-        text = text.lower().replace(amount_str, '')
-
-    # Remove common stop words and currency units
-    stop_words = [
-        'bought', 'paid', 'for', 'a', 'an', 'the', 'rs', 'rupees', 'was', 'of',
-        'my', 'recharged', 'new', 'got', 'purchase', 'cost'
-    ]
-    querywords = text.split()
+def extract_amount(text):
+    """
+    Intelligently extracts the amount from a text string.
+    Priority Order:
+    1. Looks for numbers following keywords like 'for', 'paid', 'of', 'cost', 'rs', 'inr'.
+    2. If no keywords found, and there's only ONE number in the string, returns that number.
+    3. If multiple numbers exist with no keywords, returns the LARGEST number as a best guess.
+    4. Returns None if no numbers are found.
+    """
+    text_lower = text.lower()
     
-    # Rebuild the string without the stop words
+    # Priority 1: Check for keywords followed by a number
+    amount_keywords = ['for', 'paid', 'cost', 'of', 'rs', 'inr', 'amount', 'bill']
+    for keyword in amount_keywords:
+        # Regex: finds the keyword, then any characters except numbers, then captures the number.
+        # This handles cases like "paid rs. 500" or "bill of 250"
+        match = re.search(f'{keyword}[^0-9]*(\\d+\\.?\\d*)', text_lower)
+        if match:
+            return float(match.group(1))
+
+    # Priority 2 & 3: No keywords found, analyze all numbers in the string
+    numbers = re.findall(r'\d+\.?\d*', text_lower)
+    if not numbers:
+        return None # No numbers found
+    
+    float_numbers = [float(n) for n in numbers]
+
+    if len(float_numbers) == 1:
+        return float_numbers[0] # Only one number, it must be the amount
+    else:
+        # Multiple numbers without context, assume the largest is the amount
+        # This solves "ordered from 99 pancakes for 200" -> chooses 200
+        return max(float_numbers)
+
+def extract_item(text, amount):
+    """
+    Cleans the text to create a plausible item name.
+    It now removes ALL numbers from the text to avoid including them in the item name.
+    """
+    text_lower = text.lower()
+    
+    # Remove all numbers from the text to clean it up
+    text_no_numbers = re.sub(r'\d+\.?\d*', '', text_lower).strip()
+
+    stop_words = [
+        'bought', 'paid', 'for', 'a', 'an', 'the', 'rs', 'inr', 'rupees', 'was', 'of',
+        'my', 'recharged', 'new', 'got', 'purchase', 'cost', 'bill', 'amount'
+    ]
+    querywords = text_no_numbers.split()
+    
     resultwords  = [word for word in querywords if word.lower() not in stop_words]
-    item = ' '.join(resultwords).strip().title() # Capitalize first letters of each word
+    item = ' '.join(resultwords).strip()
+    
+    # Remove extra spaces that might result from removing words
+    item = re.sub(r'\s+', ' ', item).title()
     
     return item if item else "Unknown Item"
 
 def parse_receipt_text(text):
-    """
-    Analyzes a large block of OCR text from a receipt to find the total,
-    a likely category, and a vendor name.
-    """
+    """Analyzes OCR text to find the total, a category, and a vendor name."""
     lines = text.lower().split('\n')
-    amount = None
-    category = 'Shopping'  # A safe default
-    item = "Scanned Receipt" # A safe default
+    item = "Scanned Receipt"
 
-    # 1. Find the total amount (most important part)
-    total_keywords = ['total', 'amount due', 'to pay', 'grand total', 'balance', 'net amount']
-    for line in reversed(lines):
-        for keyword in total_keywords:
-            if keyword in line:
-                found_amount = extract_amount(line)
-                if found_amount:
-                    amount = found_amount
-                    break 
-        if amount is not None:
-            break
-
-    # Fallback: If no keyword found, guess the largest number on the receipt is the total.
-    if amount is None:
-        all_numbers = re.findall(r'\d+\.?\d*', text)
-        if all_numbers:
-            amount = max([float(n) for n in all_numbers])
-
-    # 2. Guess the category based on keywords found anywhere in the receipt text.
-    category_map = {
-        'Food': ['grocery', 'market', 'foods', 'restaurant', 'cafe', 'kitchen', 'sweets', 'bakery'],
-        'Health': ['pharmacy', 'medical', 'clinic', 'hospital', 'health', 'diagnostics'],
-        'Utilities': ['telecom', 'internet', 'bill', 'invoice', 'electricity', 'water'],
-        'Shopping': ['fashion', 'store', 'mall', 'boutique', 'electronics', 'apparel', 'lifestyle']
-    }
-    for cat, keywords in category_map.items():
-        for keyword in keywords:
-            if keyword in text.lower():
-                category = cat
-                break
-        if category != 'Shopping':
-            break
+    # Use the new intelligent amount extraction on the full text
+    amount = extract_amount(text)
             
-    # 3. Guess the item/vendor name (often one of the first few non-empty lines).
+    # Guess the category using the comprehensive keyword function.
+    category = get_category_from_keywords(text) or 'Others'
+            
+    # Guess the item/vendor name (often one of the first few non-empty lines).
     for line in lines:
         if line.strip() and len(line.strip()) > 2:
-            item = line.strip().title()
-            break
+            # A simple heuristic to avoid picking a line that is just a number
+            if not re.fullmatch(r'[\d\s.,-]+', line.strip()):
+                item = line.strip().title()
+                break
 
     return {'item': item, 'amount': amount, 'category': category}
 
@@ -123,11 +146,19 @@ def process_text():
 
     input_text = data['text']
     
-    predicted_category = category_classifier.predict([input_text])[0]
+    predicted_category = get_category_from_keywords(input_text)
+    if not predicted_category:
+        print("-> No keyword match found. Using ML model for classification...")
+        predicted_category = category_classifier.predict([input_text])[0]
+    else:
+        print(f"-> Keyword match found! Category: {predicted_category}")
+    
+    # Use the new intelligent amount extraction function
     amount = extract_amount(input_text)
     if amount is None:
         return jsonify({'error': 'Could not determine the amount from the text.'}), 400
         
+    # Use the improved item extraction function
     item = extract_item(input_text, amount)
 
     response = {
@@ -159,7 +190,6 @@ def process_image_receipt():
         response = vision_client.text_detection(image=image)
         
         if response.error.message:
-            # This will catch the BILLING_DISABLED error
             raise Exception(response.error.message)
 
         if response.text_annotations:
@@ -183,5 +213,4 @@ def process_image_receipt():
 
 # --- 5. RUN THE APP ---
 if __name__ == '__main__':
-    # Listens on all network interfaces, making it accessible from the emulator/device
     app.run(host='0.0.0.0', port=5000, debug=True)
