@@ -2,6 +2,7 @@ import os
 import re
 import joblib
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from google.cloud import vision
 from sklearn.exceptions import InconsistentVersionWarning
 import warnings
@@ -13,6 +14,7 @@ warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 # --- 1. INITIAL SETUP ---
 app = Flask(__name__)
 
+CORS(app)
 # --- 2. LOAD MODELS & CLIENTS ON STARTUP ---
 
 try:
@@ -35,12 +37,13 @@ except Exception as e:
 # --- 3. KEYWORD DICTIONARY & HELPER FUNCTIONS ---
 
 CATEGORY_KEYWORDS = {
-    'Food & Dining': ['biryani', 'pizza', 'burger', 'sandwich', 'pasta', 'noodles', 'momo', 'thali', 'biriyani', 'dosa', 'idli', 'pav bhaji', 'maggi', 'roll', 'shawarma', 'wrap', 'ice cream', 'cake', 'pastry', 'dessert', 'coffee', 'tea', 'juice', 'smoothie', 'milkshake', 'biryani house', 'barbecue', 'kebab', 'tikka', 'restaurant', 'cafe', 'canteen', 'dining', 'buffet', 'meal', 'zomato', 'swiggy', 'dominos', 'pizza hut', "domino's", "mcdonald's", 'mcdonald', 'kfc', 'subway', 'burger king', 'starbucks', 'barista', '99 pancakes', 'hocco', 'bikanervala', 'haldiram', 'cafe coffee day', 'baskin robbins'],
+    'Food & Dining': ['biryani', 'pizza', 'burger', 'sandwich', 'pasta', 'noodles', 'momo', 'thali', 'biriyani', 'dosa', 'idli', 'pav bhaji', 'maggi', 'roll', 'shawarma', 'wrap', 'ice cream', 'cake', 'pastry', 'dessert', 'coffee', 'tea', 'juice', 'smoothie', 'milkshake', 'biryani house', 'barbecue', 'kebab', 'tikka', 'restaurant', 'cafe', 'canteen', 'dining', 'buffet', 'meal', 'zomato', 'swiggy', 'dominos', 'pizza hut', "domino's", "mcdonald's", 'mcdonald', 'kfc', 'subway', 'burger king', 'starbucks', 'barista', '99 pancakes', 'chicken tandoori', 'hocco','apple', 'bikanervala', 'haldiram', 'cafe coffee day', 'baskin robbins'],
     'Grocery': ['rice', 'wheat', 'dal', 'pulses', 'sugar', 'salt', 'milk', 'bread', 'butter', 'oil', 'tea powder', 'coffee powder', 'vegetables', 'fruits', 'tomato', 'potato', 'onion', 'cabbage', 'spinach', 'coriander', 'lemon', 'masala', 'atta', 'besan', 'poha', 'suji', 'jaggery', 'eggs', 'meat', 'fish', 'chicken', 'mutton', 'prawns', 'spices', 'detergent', 'soap', 'toothpaste', 'grocery', 'bigbasket', 'dmart', 'reliance fresh', 'more supermarket', "nature's basket", 'spencer’s', 'jiomart'],
+    
     'Transport': ['taxi', 'cab', 'auto', 'bus', 'train', 'flight', 'airline', 'airfare', 'metro', 'tram', 'ferry', 'fuel', 'petrol', 'diesel', 'cng', 'parking', 'toll', 'ticket', 'pass', 'travel card', 'ola', 'uber', 'rapido', 'blablacar', 'redbus', 'irctc'],
     'Shopping & Lifestyle': ['shirt', 'jeans', 't-shirt', 'tshirt', 'trousers', 'kurta', 'saree', 'dress', 'shoes', 'sandals', 'chappal', 'watch', 'wallet', 'handbag', 'purse', 'belt', 'accessories', 'jacket', 'coat', 'sweater', 'hoodie', 'spectacles', 'sunglasses', 'electronics', 'phone', 'laptop', 'charger', 'earphones', 'headphones', 'camera', 'mall', 'boutique', 'apparel', 'amazon', 'flipkart', 'myntra', 'ajio', 'meesho', 'snapdeal', 'shopclues', 'tatacliq', 'h&m', 'zara', 'nike', 'adidas', 'puma', 'reebok', 'lifestyle'],
     'Healthcare & Medicine': ['doctor', 'hospital', 'clinic', 'pharmacy', 'chemist', 'medicine', 'injection', 'vaccine', 'blood test', 'sugar test', 'x-ray', 'scan', 'ct scan', 'mri', 'consultation', 'surgery', 'therapy', 'physiotherapy', 'dentist', 'dental', 'ayurvedic', 'homeopathy', 'optician', 'spectacles', 'hearing aid', 'apollo pharmacy', 'medplus', 'pharmeasy', '1mg', 'netmeds', 'practo'],
-    'Personal Care & Grooming': ['salon', 'spa', 'haircut', 'hair wash', 'shaving', 'trimming', 'beard', 'hair color', 'facial', 'manicure', 'pedicure', 'beauty', 'makeup', 'wax', 'threading', 'perfume', 'deodorant', 'lotion', 'shampoo', 'conditioner', 'body wash', 'soap', 'comb', 'mirror', 'towel', 'grooming kit', 'nykaa', 'purplle', 'wow skin', 'beardo', 'mcaffeine', 'urban company'],
+    'Personal Care & Grooming': ['salon','spa', 'haircut', 'hair wash', 'shaving', 'trimming', 'beard', 'hair color', 'facial', 'manicure', 'pedicure', 'beauty', 'makeup', 'wax', 'threading', 'perfume', 'deodorant','prostitute','lotion', 'shampoo', 'conditioner', 'body wash', 'soap', 'comb', 'mirror', 'towel', 'grooming kit', 'nykaa', 'purplle', 'wow skin', 'beardo', 'mcaffeine', 'urban company'],
     'Utilities & Bills': ['electricity bill', 'water bill', 'gas bill', 'broadband', 'wifi', 'internet', 'cable', 'dth', 'recharge', 'mobile bill', 'postpaid', 'prepaid', 'landline', 'rent', 'emi', 'loan', 'insurance', 'subscription', 'netflix', 'prime', 'hotstar', 'spotify', 'zee5', 'sony liv', 'voot', 'youtube premium'],
     'Others': ['charity', 'donation', 'gift', 'stationery', 'pen', 'pencil', 'notebook', 'printing', 'photocopy', 'laundry', 'tailoring', 'repair', 'maintenance', 'pet food', 'toy', 'game', 'miscellaneous']
 }
@@ -170,45 +173,33 @@ def process_text():
     return jsonify(response)
 
 
-@app.route('/process-image-receipt', methods=['POST'])
-def process_image_receipt():
-    """Endpoint for processing uploaded receipt images."""
-    print("\n--- Request received at /process-image-receipt endpoint! ---")
-    if 'receipt' not in request.files:
-        return jsonify({'error': 'No image file found in request (expected key "receipt").'}), 400
-    
-    file = request.files['receipt']
-    
-    if file.filename == '':
-        return jsonify({'error': 'No image file selected.'}), 400
+@app.route('/process-voice-expense', methods=['POST'])
+def process_voice_expense():
+    """
+    This endpoint now ONLY performs Speech-to-Text (Transcription).
+    It takes audio in and returns a simple text string out.
+    """
+    print("\n--- Request received at /process-voice-expense for STT ---")
+    if not wit_client: return jsonify({'error': 'Wit.ai client is not configured.'}), 503
+    if 'audio' not in request.files: return jsonify({'error': 'No audio file found.'}), 400
 
+    audio_file = request.files['audio']
     try:
-        print("Received image, sending to Google Cloud Vision for OCR...")
-        image_content = file.read()
-        image = vision.Image(content=image_content)
+        print("Sending audio to Wit.ai for transcription...")
+        wit_response = wit_client.speech(audio_file.stream, {'Content-Type': 'audio/wav'})
         
-        response = vision_client.text_detection(image=image)
+        transcribed_text = wit_response.get('text')
+        if not transcribed_text:
+            return jsonify({'error': 'Speech could not be transcribed.'}), 400
+
+        # Return a simple JSON with just the text
+        response = {'transcribed_text': transcribed_text}
+        print(f"✅ Transcription successful: {response}")
+        return jsonify(response)
         
-        if response.error.message:
-            raise Exception(response.error.message)
-
-        if response.text_annotations:
-            full_ocr_text = response.text_annotations[0].description
-            print("✅ Google Vision OCR successful. Analyzing extracted text...")
-            
-            processed_data = parse_receipt_text(full_ocr_text)
-            
-            if processed_data.get('amount') is None:
-                return jsonify({'error': 'Could not determine total from receipt text.'}), 400
-            
-            print(f"✅ Processed image successfully: {processed_data}")
-            return jsonify(processed_data)
-        else:
-            return jsonify({'error': 'No text detected in the image by Google Vision.'}), 400
-
     except Exception as e:
-        print(f"❌ An error occurred during image processing: {e}")
-        return jsonify({'error': 'An internal error occurred while processing the image.'}), 500
+        print(f"❌ An error occurred during voice transcription: {e}")
+        return jsonify({'error': 'An internal error occurred during transcription.'}), 500
 
 
 # --- 5. RUN THE APP ---

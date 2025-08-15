@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:expense_tracker/models/expense_model.dart';
 import 'package:expense_tracker/services/firestore_service.dart';
-import 'package:expense_tracker/widgets/glass_card.dart';
+import 'package:expense_tracker/utils/app_theme.dart';
+import 'package:expense_tracker/widgets/custom-card.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -14,254 +15,289 @@ class ReportsScreen extends StatefulWidget {
 class _ReportsScreenState extends State<ReportsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
 
-  // A vibrant and distinct color palette for the charts
-  final List<Color> colorPalette = [
-    const Color(0xFF8A77FF), const Color(0xFF23B6E6), const Color(0xFF00D5A3),
-    const Color(0xFFF0A500), const Color(0xFFE53935), const Color(0xFF3D445C),
-  ];
-  
-  int pieTouchedIndex = -1; // For pie chart interactivity
-  int barTouchedIndex = -1; // For bar chart interactivity
+  int pieTouchedIndex = -1;
+  int barTouchedIndex = -1;
 
-  /// Processes raw expense data into a map of {Category: TotalAmount}.
   Map<String, double> _processCategoryData(List<Expense> expenses) {
-    Map<String, double> categoryData = {};
-    for (var expense in expenses) {
-      categoryData[expense.category] = (categoryData[expense.category] ?? 0.0) + expense.amount;
+    final Map<String, double> categoryData = {};
+    for (var e in expenses) {
+      categoryData[e.category] = (categoryData[e.category] ?? 0) + e.amount;
     }
     return categoryData;
   }
 
-  /// Processes expenses for the last 7 days into a map of {DayOfWeek: TotalAmount}.
   Map<String, double> _processWeeklyData(List<Expense> expenses) {
-    Map<String, double> weeklySpending = {};
+    final Map<String, double> weekly = {};
     final now = DateTime.now();
-    // Initialize the map with the last 7 days in the correct order
     for (int i = 6; i >= 0; i--) {
       final day = now.subtract(Duration(days: i));
-      final dayKey = DateFormat.E().format(day); // e.g., "Mon", "Tue"
-      weeklySpending[dayKey] = 0.0;
+      weekly[DateFormat.E().format(day)] = 0.0;
     }
-
-    for (var expense in expenses) {
-      final expenseDate = expense.timestamp.toDate();
-      // This is a true "rolling 7 day" check
-      if (now.difference(expenseDate).inDays < 7) {
-        final dayKey = DateFormat.E().format(expenseDate);
-        if (weeklySpending.containsKey(dayKey)) {
-          weeklySpending[dayKey] = weeklySpending[dayKey]! + expense.amount;
-        }
+    for (var e in expenses) {
+      final d = e.timestamp.toDate();
+      if (now.difference(d).inDays < 7) {
+        final k = DateFormat.E().format(d);
+        if (weekly.containsKey(k)) weekly[k] = weekly[k]! + e.amount;
       }
     }
-    return weeklySpending;
+    return weekly;
+  }
+
+  Map<String, double> _processMonthlyTrend(List<Expense> expenses) {
+    final Map<String, double> monthly = {};
+    final now = DateTime.now();
+    for (int i = 11; i >= 0; i--) {
+      final m = DateTime(now.year, now.month - i, 1);
+      final key = DateFormat.MMM().format(m);
+      monthly[key] = 0.0;
+    }
+    for (var e in expenses) {
+      final d = e.timestamp.toDate();
+      final key = DateFormat.MMM().format(d);
+      if (monthly.containsKey(key)) {
+        monthly[key] = monthly[key]! + e.amount;
+      }
+    }
+    return monthly;
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final appColors = theme.extension<AppTokens>()!;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Financial Analysis')),
       body: StreamBuilder<List<Expense>>(
         stream: _firestoreService.getExpensesStream(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error.toString()}'));
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('No expense data to generate reports.'));
-          }
-          
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+          if (!snapshot.hasData || snapshot.data!.isEmpty) return Center(child: Text('No expense data to generate reports.', style: theme.textTheme.bodyLarge));
+
           final expenses = snapshot.data!;
           final categoryData = _processCategoryData(expenses);
           final weeklyData = _processWeeklyData(expenses);
-          final totalExpenses = expenses.fold(0.0, (sum, item) => sum + item.amount);
+          final monthlyTrend = _processMonthlyTrend(expenses);
+          final total = expenses.fold<double>(0, (sum, e) => sum + e.amount);
 
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                _buildTotalCard(totalExpenses),
-                const SizedBox(height: 20),
-                _buildBarChartCard(weeklyData),
-                const SizedBox(height: 20),
-                _buildDonutChartCard(categoryData, totalExpenses),
+                CustomCard(
+                  elevated: true,
+                  child: Column(
+                    children: [
+                      Text('Total Expenses', style: theme.textTheme.bodyMedium),
+                      const SizedBox(height: 6),
+                      Text('₹${total.toStringAsFixed(2)}', style: theme.textTheme.headlineMedium),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Weekly Bar Chart
+                CustomCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Weekly Analytics', style: theme.textTheme.titleLarge),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: 220,
+                        child: BarChart(
+                          BarChartData(
+                            maxY: (weeklyData.values.isEmpty ? 0 : weeklyData.values.reduce((a, b) => a > b ? a : b)) * 1.2 + 10,
+                            barTouchData: BarTouchData(
+                              touchCallback: (event, response) {
+                                setState(() {
+                                  if (!event.isInterestedForInteractions || response?.spot == null) {
+                                    barTouchedIndex = -1;
+                                  } else {
+                                    barTouchedIndex = response!.spot!.touchedBarGroupIndex;
+                                  }
+                                });
+                              },
+                            ),
+                            titlesData: FlTitlesData(
+                              rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              bottomTitles: AxisTitles(
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  reservedSize: 30,
+                                  getTitlesWidget: (v, meta) {
+                                    final label = weeklyData.keys.elementAt(v.toInt());
+                                    return SideTitleWidget(
+                                      meta: meta,
+                                      space: 6,
+                                      child: Text(label, style: theme.textTheme.bodyMedium),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                            borderData: FlBorderData(show: false),
+                            gridData: const FlGridData(show: false),
+                            barGroups: List.generate(weeklyData.length, (i) {
+                              final isTouched = i == barTouchedIndex;
+                              final entry = weeklyData.entries.elementAt(i);
+                              return BarChartGroupData(
+                                x: i,
+                                barRods: [
+                                  BarChartRodData(
+                                    toY: entry.value,
+                                    color: isTouched ? theme.colorScheme.primary : theme.colorScheme.primary.withOpacity(0.6),
+                                    width: isTouched ? 18 : 14,
+                                    borderRadius: const BorderRadius.only(topLeft: Radius.circular(6), topRight: Radius.circular(6)),
+                                  ),
+                                ],
+                              );
+                            }),
+                          ),
+                          swapAnimationDuration: const Duration(milliseconds: 800),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Monthly Line Chart
+                CustomCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Monthly Trend', style: theme.textTheme.titleLarge),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: 220,
+                        child: LineChart(
+                          LineChartData(
+                            minX: 0,
+                            maxX: (monthlyTrend.length - 1).toDouble(),
+                            minY: 0,
+                            lineBarsData: [
+                              LineChartBarData(
+                                spots: List.generate(monthlyTrend.length, (i) {
+                                  final v = monthlyTrend.values.elementAt(i);
+                                  return FlSpot(i.toDouble(), v);
+                                }),
+                                isCurved: true,
+                                color: theme.colorScheme.primary,
+                                barWidth: 3,
+                                belowBarData: BarAreaData(
+                                  show: true,
+                                  color: theme.colorScheme.primary.withOpacity(0.12),
+                                ),
+                                dotData: const FlDotData(show: false),
+                              ),
+                            ],
+                            titlesData: FlTitlesData(
+                              rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              bottomTitles: AxisTitles(
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  interval: 2,
+                                  getTitlesWidget: (v, meta) {
+                                    final i = v.toInt();
+                                    if (i < 0 || i >= monthlyTrend.length) return const SizedBox.shrink();
+                                    final label = monthlyTrend.keys.elementAt(i);
+                                    return SideTitleWidget(meta: meta, child: Text(label, style: theme.textTheme.bodyMedium));
+                                  },
+                                ),
+                              ),
+                            ),
+                            gridData: const FlGridData(show: false),
+                            borderData: FlBorderData(show: false),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Category Donut
+                CustomCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Category Breakdown', style: theme.textTheme.titleLarge),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          SizedBox(
+                            height: 160,
+                            width: 160,
+                            child: PieChart(
+                              PieChartData(
+                                centerSpaceRadius: 48,
+                                sectionsSpace: 2,
+                                pieTouchData: PieTouchData(
+                                  touchCallback: (event, response) {
+                                    setState(() {
+                                      if (!event.isInterestedForInteractions || response?.touchedSection == null) {
+                                        pieTouchedIndex = -1;
+                                      } else {
+                                        pieTouchedIndex = response!.touchedSection!.touchedSectionIndex;
+                                      }
+                                    });
+                                  },
+                                ),
+                                sections: List.generate(categoryData.length, (i) {
+                                  final entry = categoryData.entries.elementAt(i);
+                                  final isTouched = i == pieTouchedIndex;
+                                  final value = entry.value;
+                                  final percentage = total > 0 ? (value / total) * 100 : 0;
+                                  final palette = appColors.chartPalette;
+                                  return PieChartSectionData(
+                                    color: palette[i % palette.length],
+                                    value: value,
+                                    title: '${percentage.toStringAsFixed(0)}%',
+                                    radius: isTouched ? 54 : 46,
+                                    titleStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                                  );
+                                }),
+                              ),
+                              swapAnimationDuration: const Duration(milliseconds: 800),
+                              swapAnimationCurve: Curves.easeOutCubic,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: categoryData.entries.map((e) {
+                                final index = categoryData.keys.toList().indexOf(e.key);
+                                final color = appColors.chartPalette[index % appColors.chartPalette.length];
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Row(
+                                    children: [
+                                      Container(width: 12, height: 12, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                                      const SizedBox(width: 8),
+                                      Expanded(child: Text(e.key, style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis)),
+                                      Text('₹${e.value.toStringAsFixed(0)}', style: theme.textTheme.bodyMedium),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           );
         },
-      ),
-    );
-  }
-
-  /// Builds the top card showing total expenses.
-  Widget _buildTotalCard(double total) {
-    return GlassCard(
-      child: Center(
-        child: Column(
-          children: [
-            Text('Total Expenses', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70)),
-            const SizedBox(height: 8),
-            Text(
-              '₹${total.toStringAsFixed(2)}',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: Colors.white),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Builds the interactive bar chart for weekly spending.
-  Widget _buildBarChartCard(Map<String, double> weeklyData) {
-    final double maxY = weeklyData.values.fold(0.0, (max, current) => current > max ? current : max);
-    final primaryColor = Theme.of(context).colorScheme.primary;
-
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Weekly Analytics', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 24),
-          SizedBox(
-            height: 200,
-            child: BarChart(
-              BarChartData(
-                maxY: maxY == 0 ? 100 : maxY * 1.2,
-                // This section handles the touch interaction
-                barTouchData: BarTouchData(
-                  touchCallback: (FlTouchEvent event, barTouchResponse) {
-                    setState(() {
-                      if (!event.isInterestedForInteractions || barTouchResponse == null || barTouchResponse.spot == null) {
-                        barTouchedIndex = -1; // User is not touching a bar
-                        return;
-                      }
-                      // User is touching a bar, store its index
-                      barTouchedIndex = barTouchResponse.spot!.touchedBarGroupIndex;
-                    });
-                  },
-                ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (double value, TitleMeta meta) {
-                        final titles = weeklyData.keys.toList();
-                        return SideTitleWidget(
-                          space: 4,
-                          meta: meta,
-                          child: Text(titles[value.toInt()], style: TextStyle(fontSize: 12, color: Colors.white70)),
-                        );
-                      },
-                      reservedSize: 30,
-                    ),
-                  ),
-                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                ),
-                borderData: FlBorderData(show: false),
-                gridData: const FlGridData(show: false),
-                barGroups: List.generate(weeklyData.length, (i) {
-                  final isTouched = i == barTouchedIndex;
-                  final entry = weeklyData.entries.elementAt(i);
-                  return BarChartGroupData(
-                    x: i,
-                    barRods: [
-                      BarChartRodData(
-                        toY: entry.value,
-                        // Bar becomes brighter and thicker when touched
-                        color: isTouched ? primaryColor : primaryColor.withOpacity(0.5),
-                        width: isTouched ? 22 : 16,
-                        borderRadius: const BorderRadius.only(topLeft: Radius.circular(6), topRight: Radius.circular(6)),
-                      ),
-                    ],
-                  );
-                }),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Builds the interactive donut chart for category breakdown.
-  Widget _buildDonutChartCard(Map<String, double> categoryData, double total) {
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Category Breakdown', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              SizedBox(
-                height: 150,
-                width: 150,
-                child: PieChart(
-                  PieChartData(
-                    pieTouchData: PieTouchData(
-                      touchCallback: (FlTouchEvent event, pieTouchResponse) {
-                        setState(() {
-                          if (!event.isInterestedForInteractions || pieTouchResponse == null || pieTouchResponse.touchedSection == null) {
-                            pieTouchedIndex = -1;
-                            return;
-                          }
-                          pieTouchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
-                        });
-                      },
-                    ),
-                    sections: List.generate(categoryData.length, (i) {
-                      final isTouched = i == pieTouchedIndex;
-                      final fontSize = isTouched ? 16.0 : 12.0;
-                      final radius = isTouched ? 50.0 : 40.0;
-                      final entry = categoryData.entries.elementAt(i);
-                      final percentage = total > 0 ? (entry.value / total) * 100 : 0;
-                      
-                      return PieChartSectionData(
-                        color: colorPalette[i % colorPalette.length],
-                        value: entry.value,
-                        title: '${percentage.toStringAsFixed(0)}%',
-                        radius: radius,
-                        titleStyle: TextStyle(fontSize: fontSize, fontWeight: FontWeight.bold, color: Colors.white),
-                      );
-                    }),
-                    centerSpaceRadius: 50,
-                    sectionsSpace: 2,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: categoryData.entries.map((entry) {
-                    final index = categoryData.keys.toList().indexOf(entry.key);
-                    return _buildLegendItem(colorPalette[index % colorPalette.length], entry.key);
-                  }).toList(),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Helper widget for the legend items next to the donut chart.
-  Widget _buildLegendItem(Color color, String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Container(width: 12, height: 12, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 8),
-          Flexible(child: Text(text, style: const TextStyle(fontSize: 14), overflow: TextOverflow.ellipsis)),
-        ],
       ),
     );
   }

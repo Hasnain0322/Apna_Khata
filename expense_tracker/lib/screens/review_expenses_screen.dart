@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:expense_tracker/services/firestore_service.dart';
-import 'package:expense_tracker/widgets/glass_card.dart';
+import 'package:expense_tracker/widgets/custom-card.dart';
 
 class ReviewExpensesScreen extends StatefulWidget {
   final List<Map<String, dynamic>> foundExpenses;
@@ -19,7 +19,6 @@ class _ReviewExpensesScreenState extends State<ReviewExpensesScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize all found expenses as selected by default
     _selected = List<bool>.filled(widget.foundExpenses.length, true);
   }
 
@@ -29,52 +28,46 @@ class _ReviewExpensesScreenState extends State<ReviewExpensesScreen> {
 
     for (int i = 0; i < widget.foundExpenses.length; i++) {
       if (_selected[i]) {
-        final expense = widget.foundExpenses[i];
-        await _firestoreService.addExpense(
-          expense['item'],
-          expense['amount'],
-          expense['category'],
-        );
+        final e = widget.foundExpenses[i];
+        await _firestoreService.addExpense(e['item'], e['amount'], e['category']);
         importCount++;
       }
     }
 
     if (mounted) {
-      Navigator.of(context).pop(); // Go back to the HomeScreen
+      Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Successfully imported $importCount expenses!'), backgroundColor: Colors.green),
+        SnackBar(content: Text('Successfully imported $importCount expenses!'), backgroundColor: Theme.of(context).colorScheme.onBackground),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final selectedCount = _selected.where((item) => item == true).length;
+    final theme = Theme.of(context);
+    final selectedCount = _selected.where((x) => x).length;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Review & Import')),
       body: widget.foundExpenses.isEmpty
-          ? const Center(child: Text('No debit transactions were found in the PDF.'))
+          ? Center(child: Text('No debit transactions were found in the PDF.', style: theme.textTheme.bodyLarge))
           : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 80), // Padding to avoid FAB overlap
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
               itemCount: widget.foundExpenses.length,
               itemBuilder: (context, index) {
-                final expense = widget.foundExpenses[index];
+                final e = widget.foundExpenses[index];
                 return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4.0),
-                  child: GlassCard(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: CustomCard(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: CheckboxListTile(
-                      title: Text(expense['item'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(expense['category']),
-                      secondary: Text('₹${expense['amount'].toStringAsFixed(2)}', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold)),
+                      title: Text(e['item'], style: theme.textTheme.titleMedium),
+                      subtitle: Text(e['category'], style: theme.textTheme.bodyMedium),
+                      secondary: Text('₹${e['amount'].toStringAsFixed(2)}', style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.primary)),
                       value: _selected[index],
-                      onChanged: (bool? value) {
-                        setState(() {
-                          _selected[index] = value!;
-                        });
-                      },
-                      activeColor: Theme.of(context).colorScheme.primary,
+                      onChanged: (v) => setState(() => _selected[index] = v ?? false),
+                      activeColor: theme.colorScheme.primary,
+                      controlAffinity: ListTileControlAffinity.leading,
                     ),
                   ),
                 );
@@ -86,7 +79,7 @@ class _ReviewExpensesScreenState extends State<ReviewExpensesScreen> {
               onPressed: selectedCount > 0 ? _importSelectedExpenses : null,
               label: Text('Import ($selectedCount)'),
               icon: const Icon(Icons.download_done),
-              backgroundColor: selectedCount > 0 ? Theme.of(context).colorScheme.primary : Colors.grey,
+              backgroundColor: selectedCount > 0 ? Theme.of(context).colorScheme.primary : Theme.of(context).disabledColor,
             ),
     );
   }
